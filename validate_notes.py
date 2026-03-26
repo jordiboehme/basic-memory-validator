@@ -317,28 +317,56 @@ def validate_quality(notes: list[NoteFile], config: Config) -> list[Issue]:
 # Reporter
 # ---------------------------------------------------------------------------
 
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
+
+
 def report_console(issues: list[Issue]) -> None:
     by_file: dict[str, list[Issue]] = {}
     for issue in issues:
         by_file.setdefault(issue.file_path, []).append(issue)
 
     for file_path in sorted(by_file):
-        print(f"\n{file_path}")
+        print(f"\n{BOLD}{file_path}{RESET}")
         file_issues = sorted(by_file[file_path], key=lambda i: i.line or 0)
         for issue in file_issues:
+            color = RED if issue.severity == Severity.ERROR else YELLOW
             severity = issue.severity.value.upper()
-            print(f"  {severity} [{issue.rule_id}] line {issue.line or '-'}: {issue.message}")
-            print(f"    Fix: {issue.fix}")
+            line = issue.line or "\u2014"
+            print(f"  {color}{severity}{RESET} [{issue.rule_id}] line {line}: {issue.message}")
+            print(f"    {DIM}Fix: {issue.fix}{RESET}")
 
 
-def report_github(issues: list[Issue]) -> None:
+def _write_issue_table(f, issues: list[Issue]) -> None:
+    f.write("| File | Line | Rule | Issue | Fix |\n")
+    f.write("|------|------|------|-------|-----|\n")
+    for i in issues:
+        line = str(i.line) if i.line else "\u2014"
+        f.write(f"| `{i.file_path}` | {line} | {i.rule_id} | {i.message} | {i.fix} |\n")
+
+
+def report_github(issues: list[Issue], files_checked: int) -> None:
+    by_file: dict[str, list[Issue]] = {}
     for issue in issues:
-        severity = "error" if issue.severity == Severity.ERROR else "warning"
-        loc_parts = [f"file={issue.file_path}"]
-        if issue.line:
-            loc_parts.append(f"line={issue.line}")
-        loc = ",".join(loc_parts)
-        print(f"::{severity} {loc}::[{issue.rule_id}] {issue.message} Fix: {issue.fix}")
+        by_file.setdefault(issue.file_path, []).append(issue)
+
+    # Emit annotations with title parameter, grouped by file
+    for file_path in sorted(by_file):
+        print(f"::group::{file_path}")
+        file_issues = sorted(by_file[file_path], key=lambda i: i.line or 0)
+        for issue in file_issues:
+            severity = "error" if issue.severity == Severity.ERROR else "warning"
+            loc_parts = [f"file={issue.file_path}"]
+            if issue.line:
+                loc_parts.append(f"line={issue.line}")
+            loc = ",".join(loc_parts)
+            msg = issue.message.rstrip(".")
+            print(f"::{severity} {loc},title={issue.rule_id}::{msg}. Fix: {issue.fix}")
+        print("::endgroup::")
 
     # Write step summary
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -348,27 +376,30 @@ def report_github(issues: list[Issue]) -> None:
         with open(summary_path, "a") as f:
             f.write("## Knowledge Base Validation\n\n")
             if not issues:
-                f.write("All notes are valid.\n")
+                noun = "note" if files_checked == 1 else "notes"
+                f.write(f"> All **{files_checked} {noun}** passed validation\n")
             else:
+                parts = []
                 if errors:
-                    f.write(f"### Errors ({len(errors)})\n\n")
-                    f.write("| File | Rule | Issue | Fix |\n")
-                    f.write("|------|------|-------|-----|\n")
-                    for i in errors:
-                        loc = f"line {i.line}" if i.line else "-"
-                        f.write(f"| `{i.file_path}` ({loc}) | {i.rule_id} | {i.message} | {i.fix} |\n")
-                    f.write("\n")
+                    parts.append(f"**{len(errors)} error{'s' if len(errors) != 1 else ''}**")
                 if warnings:
-                    f.write(f"### Warnings ({len(warnings)})\n\n")
-                    f.write("| File | Rule | Issue | Fix |\n")
-                    f.write("|------|------|-------|-----|\n")
-                    for i in warnings:
-                        loc = f"line {i.line}" if i.line else "-"
-                        f.write(f"| `{i.file_path}` ({loc}) | {i.rule_id} | {i.message} | {i.fix} |\n")
-                    f.write("\n")
+                    parts.append(f"**{len(warnings)} warning{'s' if len(warnings) != 1 else ''}**")
+                f.write(f"> {' and '.join(parts)} found across **{files_checked} file{'s' if files_checked != 1 else ''}**\n\n")
+
+                if errors:
+                    f.write("<details open>\n")
+                    f.write(f"<summary><strong>Errors ({len(errors)})</strong></summary>\n\n")
+                    _write_issue_table(f, errors)
+                    f.write("\n</details>\n\n")
+
+                if warnings:
+                    f.write("<details>\n")
+                    f.write(f"<summary><strong>Warnings ({len(warnings)})</strong></summary>\n\n")
+                    _write_issue_table(f, warnings)
+                    f.write("\n</details>\n\n")
 
 
-def print_summary(issues: list[Issue], files_checked: int) -> None:
+def print_summary(issues: list[Issue], files_checked: int, output_format: str) -> None:
     errors = sum(1 for i in issues if i.severity == Severity.ERROR)
     warnings = sum(1 for i in issues if i.severity == Severity.WARNING)
     parts = []
@@ -377,7 +408,13 @@ def print_summary(issues: list[Issue], files_checked: int) -> None:
     if warnings:
         parts.append(f"{warnings} warning{'s' if warnings != 1 else ''}")
     status = ", ".join(parts) if parts else "all valid"
-    print(f"\nChecked {files_checked} files: {status}")
+
+    if output_format == "github":
+        severity = "error" if errors else ("warning" if warnings else "notice")
+        print(f"::{severity}::Checked {files_checked} file{'s' if files_checked != 1 else ''}: {status}")
+    else:
+        color = RED if errors else (YELLOW if warnings else GREEN)
+        print(f"\n{color}Checked {files_checked} file{'s' if files_checked != 1 else ''}: {status}{RESET}")
 
 
 # ---------------------------------------------------------------------------
@@ -434,11 +471,11 @@ def main() -> None:
 
     # Report
     if args.output_format == "github":
-        report_github(issues)
+        report_github(issues, len(notes))
     else:
         report_console(issues)
 
-    print_summary(issues, len(notes))
+    print_summary(issues, len(notes), args.output_format)
 
     has_errors = any(i.severity == Severity.ERROR for i in issues)
     sys.exit(1 if has_errors else 0)
