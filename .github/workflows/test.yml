@@ -23,4 +23,4 @@ jobs:
         run: pip install pyyaml pytest
 
       - name: Run tests
-        run: pytest test_validate_notes.py -v
+        run: pytest -v

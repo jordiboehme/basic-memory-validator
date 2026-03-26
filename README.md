@@ -1,8 +1,12 @@
 # basic-memory-validator
 
+[![Tests](https://github.com/jordiboehme/basic-memory-validator/actions/workflows/test.yml/badge.svg)](https://github.com/jordiboehme/basic-memory-validator/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/jordiboehme/basic-memory-validator)](https://github.com/jordiboehme/basic-memory-validator/releases)
+
 GitHub Action that validates [Basic Memory](https://github.com/basicmachines-co/basic-memory) markdown notes — checks YAML frontmatter, wikilinks, permalinks, and tags.
 
-## Usage
+## Quick Start
 
 ```yaml
 name: Validate Knowledge Base
@@ -19,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: jordiboehme/basic-memory-validator@main
+      - uses: jordiboehme/basic-memory-validator@v1
         with:
           paths: ['memory/']
 ```
@@ -27,7 +31,7 @@ jobs:
 ### Multiple directories
 
 ```yaml
-      - uses: jordiboehme/basic-memory-validator@main
+      - uses: jordiboehme/basic-memory-validator@v1
         with:
           paths: ['memory/', 'notes/']
 ```
@@ -35,7 +39,7 @@ jobs:
 ### Custom config
 
 ```yaml
-      - uses: jordiboehme/basic-memory-validator@main
+      - uses: jordiboehme/basic-memory-validator@v1
         with:
           paths: ['memory/']
           config: '.validation-config.json'
@@ -95,3 +99,7 @@ python validate_notes.py memory/
 python validate_notes.py memory/ notes/              # multiple directories
 python validate_notes.py memory/ --config config.json # custom config
 ```
+
+## License
+
+[MIT](LICENSE)

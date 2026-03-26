@@ -1,5 +1,9 @@
 name: 'Validate Basic Memory Notes'
+author: 'Jordi Boehme'
 description: 'Validates markdown notes in Basic Memory knowledge bases — checks YAML frontmatter, wikilinks, permalinks, and tags'
+branding:
+  icon: 'check-circle'
+  color: 'green'
 
 inputs:
   paths:
