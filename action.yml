@@ -1,0 +1,34 @@
+name: 'Validate Basic Memory Notes'
+description: 'Validates markdown notes in Basic Memory knowledge bases — checks YAML frontmatter, wikilinks, permalinks, and tags'
+
+inputs:
+  paths:
+    description: 'Directories to validate (e.g. "memory/" or "[''memory/'', ''notes/'']")'
+    required: false
+    default: 'memory/'
+  config:
+    description: 'Path to a JSON config override file for custom validation rules'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: pip install pyyaml
+      shell: bash
+
+    - name: Validate notes
+      run: |
+        # Parse paths: strip brackets/quotes, split on commas or newlines
+        DIRS=$(echo "${{ inputs.paths }}" | sed "s/^\[//;s/\]$//;s/'//g;s/\"//g" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$' | tr '\n' ' ')
+        python "${{ github.action_path }}/validate_notes.py" \
+          --format github \
+          ${{ inputs.config && format('--config {0}', inputs.config) || '' }} \
+          $DIRS
+      shell: bash
