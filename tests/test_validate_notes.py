@@ -225,17 +225,24 @@ class TestF002:
 # ---------------------------------------------------------------------------
 
 class TestF003:
-    @pytest.mark.parametrize("type_val,expect", [
-        ("note", False),
-        ("manifest", False),
-        ("blog", True),
-        ("NOTE", True),
-    ])
-    def test_type_validation(self, type_val, expect):
-        note = parse_note("a.md", make_note(type_=type_val))
-        issues = validate_format(note, Config())
-        has_f003 = "F003" in issue_ids(issues)
-        assert has_f003 == expect
+    def test_default_accepts_any_non_empty(self):
+        """Default config (no valid_types) accepts any non-empty string."""
+        for type_val in ("note", "manifest", "blog", "NOTE", "custom"):
+            note = parse_note("a.md", make_note(type_=type_val))
+            assert "F003" not in issue_ids(validate_format(note, Config()))
+
+    def test_default_rejects_empty_string(self):
+        content = "---\ntitle: X\ntype: ''\npermalink: test/x\ntags:\n  - a\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        assert "F003" in issue_ids(validate_format(note, Config()))
+
+    def test_configured_valid_types(self):
+        """When valid_types is set, only those types are accepted."""
+        cfg = Config(valid_types=("note", "manifest"))
+        note_ok = parse_note("a.md", make_note(type_="note"))
+        assert "F003" not in issue_ids(validate_format(note_ok, cfg))
+        note_bad = parse_note("b.md", make_note(type_="blog"))
+        assert "F003" in issue_ids(validate_format(note_bad, cfg))
 
     def test_none_type_skipped(self):
         content = "---\ntitle: X\ntype: null\npermalink: test/x\ntags:\n  - a\n---\nA\nB\nC\n"
@@ -309,6 +316,8 @@ class TestConfigOverrides:
         cfg = Config(valid_types=("note", "manifest", "registry"))
         note = parse_note("a.md", make_note(type_="registry"))
         assert "F003" not in issue_ids(validate_format(note, cfg))
+        note_bad = parse_note("b.md", make_note(type_="blog"))
+        assert "F003" in issue_ids(validate_format(note_bad, cfg))
 
     def test_custom_permalink_pattern(self):
         cfg = Config(permalink_pattern=r".*")  # accept anything
@@ -442,7 +451,7 @@ class TestQ004:
 class TestConfig:
     def test_defaults(self):
         cfg = Config()
-        assert cfg.valid_types == ("note", "manifest")
+        assert cfg.valid_types == ()
         assert cfg.required_fields == ("title", "type", "permalink", "tags")
         assert cfg.min_content_lines == 3
 
@@ -679,12 +688,13 @@ class TestIntegration:
         assert all_issues == []
 
     def test_mixed_pipeline(self):
+        cfg = Config(valid_types=("note", "manifest"))
         bad = parse_note("bad.md", make_note(type_="invalid", body="See [[Ghost]].\n\n\n"))
         good = parse_note("good.md", make_note(title="Good", permalink="test/good"))
         issues = []
         for n in [bad, good]:
-            issues.extend(validate_format(n, Config()))
-        issues.extend(validate_quality([bad, good], Config()))
+            issues.extend(validate_format(n, cfg))
+        issues.extend(validate_quality([bad, good], cfg))
         ids = issue_ids(issues)
         assert "F003" in ids
         assert "Q001" in ids
