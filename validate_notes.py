@@ -33,7 +33,7 @@ import yaml
 
 @dataclass
 class Config:
-    valid_types: tuple[str, ...] = ("note", "manifest")
+    valid_types: tuple[str, ...] = ()
     required_fields: tuple[str, ...] = ("title", "type", "permalink", "tags")
     permalink_pattern: str = r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9/-]*$"
     tag_pattern: str = r"^[a-z0-9]+(-[a-z0-9]+)*$"
@@ -188,15 +188,25 @@ def validate_format(note: NoteFile, config: Config) -> list[Issue]:
 
     # F003: Valid type
     note_type = fm.get("type")
-    if note_type is not None and note_type not in config.valid_types:
-        issues.append(Issue(
-            file_path=note.path,
-            line=1,
-            severity=Severity.ERROR,
-            rule_id="F003",
-            message=f"Invalid type '{note_type}' — must be one of: {', '.join(config.valid_types)}.",
-            fix="Use edit_note() to set the correct type.",
-        ))
+    if note_type is not None:
+        if config.valid_types and note_type not in config.valid_types:
+            issues.append(Issue(
+                file_path=note.path,
+                line=1,
+                severity=Severity.ERROR,
+                rule_id="F003",
+                message=f"Invalid type '{note_type}' — must be one of: {', '.join(config.valid_types)}.",
+                fix="Use edit_note() to set the correct type.",
+            ))
+        elif not config.valid_types and (not isinstance(note_type, str) or not note_type.strip()):
+            issues.append(Issue(
+                file_path=note.path,
+                line=1,
+                severity=Severity.ERROR,
+                rule_id="F003",
+                message="Type must be a non-empty string.",
+                fix="Use edit_note() to set the correct type.",
+            ))
 
     # F004: Tags is a non-empty list
     tags = fm.get("tags")

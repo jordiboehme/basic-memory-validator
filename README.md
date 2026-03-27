@@ -60,7 +60,7 @@ jobs:
 |------|-------|
 | F001 | YAML frontmatter is parseable (delimited by `---`) |
 | F002 | Required fields present: `title`, `type`, `permalink`, `tags` |
-| F003 | `type` is one of: `note`, `manifest` |
+| F003 | `type` is a non-empty string (or one of `valid_types` if configured) |
 | F004 | `tags` is a non-empty list |
 | F005 | `permalink` is lowercase slash-separated path |
 
