@@ -351,12 +351,42 @@ def report_console(issues: list[Issue]) -> None:
             print(f"    {DIM}Fix: {issue.fix}{RESET}")
 
 
-def _write_issue_table(f, issues: list[Issue]) -> None:
-    f.write("| File | Line | Rule | Issue | Fix |\n")
-    f.write("|------|------|------|-------|-----|\n")
+def _format_issue_table(issues: list[Issue]) -> str:
+    lines = ["| File | Line | Rule | Issue | Fix |", "|------|------|------|-------|-----|"]
     for i in issues:
         line = str(i.line) if i.line else "\u2014"
-        f.write(f"| `{i.file_path}` | {line} | {i.rule_id} | {i.message} | {i.fix} |\n")
+        lines.append(f"| `{i.file_path}` | {line} | {i.rule_id} | {i.message} | {i.fix} |")
+    return "\n".join(lines) + "\n"
+
+
+def _build_summary_markdown(issues: list[Issue], files_checked: int) -> str:
+    parts_out: list[str] = ["## Knowledge Base Validation\n"]
+    if not issues:
+        noun = "note" if files_checked == 1 else "notes"
+        parts_out.append(f"> All **{files_checked} {noun}** passed validation\n")
+    else:
+        errors = [i for i in issues if i.severity == Severity.ERROR]
+        warnings = [i for i in issues if i.severity == Severity.WARNING]
+        desc = []
+        if errors:
+            desc.append(f"**{len(errors)} error{'s' if len(errors) != 1 else ''}**")
+        if warnings:
+            desc.append(f"**{len(warnings)} warning{'s' if len(warnings) != 1 else ''}**")
+        parts_out.append(f"> {' and '.join(desc)} found across **{files_checked} file{'s' if files_checked != 1 else ''}**\n")
+
+        if errors:
+            parts_out.append("<details open>")
+            parts_out.append(f"<summary><strong>Errors ({len(errors)})</strong></summary>\n")
+            parts_out.append(_format_issue_table(errors))
+            parts_out.append("</details>\n")
+
+        if warnings:
+            parts_out.append("<details>")
+            parts_out.append(f"<summary><strong>Warnings ({len(warnings)})</strong></summary>\n")
+            parts_out.append(_format_issue_table(warnings))
+            parts_out.append("</details>\n")
+
+    return "\n".join(parts_out)
 
 
 def report_github(issues: list[Issue], files_checked: int) -> None:
@@ -378,35 +408,20 @@ def report_github(issues: list[Issue], files_checked: int) -> None:
             print(f"::{severity} {loc},title={issue.rule_id}::{msg}. Fix: {issue.fix}")
         print("::endgroup::")
 
+    # Build summary markdown
+    summary_md = _build_summary_markdown(issues, files_checked)
+
     # Write step summary
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
-        errors = [i for i in issues if i.severity == Severity.ERROR]
-        warnings = [i for i in issues if i.severity == Severity.WARNING]
         with open(summary_path, "a") as f:
-            f.write("## Knowledge Base Validation\n\n")
-            if not issues:
-                noun = "note" if files_checked == 1 else "notes"
-                f.write(f"> All **{files_checked} {noun}** passed validation\n")
-            else:
-                parts = []
-                if errors:
-                    parts.append(f"**{len(errors)} error{'s' if len(errors) != 1 else ''}**")
-                if warnings:
-                    parts.append(f"**{len(warnings)} warning{'s' if len(warnings) != 1 else ''}**")
-                f.write(f"> {' and '.join(parts)} found across **{files_checked} file{'s' if files_checked != 1 else ''}**\n\n")
+            f.write(summary_md)
 
-                if errors:
-                    f.write("<details open>\n")
-                    f.write(f"<summary><strong>Errors ({len(errors)})</strong></summary>\n\n")
-                    _write_issue_table(f, errors)
-                    f.write("\n</details>\n\n")
-
-                if warnings:
-                    f.write("<details>\n")
-                    f.write(f"<summary><strong>Warnings ({len(warnings)})</strong></summary>\n\n")
-                    _write_issue_table(f, warnings)
-                    f.write("\n</details>\n\n")
+    # Write summary file for PR comment step
+    summary_file = os.environ.get("VALIDATION_SUMMARY_FILE")
+    if summary_file:
+        with open(summary_file, "w") as f:
+            f.write(summary_md)
 
 
 def print_summary(issues: list[Issue], files_checked: int, output_format: str) -> None:

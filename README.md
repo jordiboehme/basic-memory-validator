@@ -18,6 +18,9 @@ on:
     branches: [main]
     paths: ['memory/**/*.md']
 
+permissions:
+  pull-requests: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -51,6 +54,9 @@ jobs:
 |-------|---------|-------------|
 | `paths` | `['memory/']` | Directories to validate |
 | `config` | | Path to a JSON config override file |
+| `comment` | `'true'` | Post validation results as a PR comment (requires `pull-requests: write`) |
+
+> **Note:** The `comment` option posts a summary comment on the PR conversation tab. On re-pushes, the existing comment is updated in place. Set to `'false'` to disable. Fork PRs may not have write access — the step will silently skip if permissions are insufficient.
 
 ## Validation Rules
 

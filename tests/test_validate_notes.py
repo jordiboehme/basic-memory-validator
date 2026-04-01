@@ -17,7 +17,8 @@ from validate_notes import (
     Config,
     Issue,
     Severity,
-    _write_issue_table,
+    _build_summary_markdown,
+    _format_issue_table,
     parse_note,
     print_summary,
     report_console,
@@ -595,6 +596,89 @@ class TestReportGithub:
         content = summary_file.read_text()
         assert "**1 note**" in content
         assert "notes**" not in content
+
+
+# ---------------------------------------------------------------------------
+# _build_summary_markdown
+# ---------------------------------------------------------------------------
+
+class TestBuildSummaryMarkdown:
+    def test_no_issues(self):
+        md = _build_summary_markdown([], 5)
+        assert "## Knowledge Base Validation" in md
+        assert "All **5 notes** passed validation" in md
+
+    def test_single_note_no_issues(self):
+        md = _build_summary_markdown([], 1)
+        assert "**1 note**" in md
+        assert "notes**" not in md
+
+    def test_errors_only(self):
+        issues = [Issue("a.md", 1, Severity.ERROR, "F003", "Bad type.", "Fix.")]
+        md = _build_summary_markdown(issues, 1)
+        assert "**1 error**" in md
+        assert "<details open>" in md
+        assert "warning" not in md.lower().split("</details>")[-1]
+
+    def test_warnings_only(self):
+        issues = [Issue("a.md", 1, Severity.WARNING, "Q001", "Broken.", "Fix.")]
+        md = _build_summary_markdown(issues, 1)
+        assert "**1 warning**" in md
+        assert "<details>" in md
+
+    def test_mixed(self):
+        issues = [
+            Issue("a.md", 1, Severity.ERROR, "F003", "Bad type.", "Fix type."),
+            Issue("a.md", None, Severity.WARNING, "Q004", "Short.", "Add content."),
+        ]
+        md = _build_summary_markdown(issues, 3)
+        assert "**1 error**" in md
+        assert "**1 warning**" in md
+        assert "**3 files**" in md
+
+    def test_pluralization(self):
+        issues = [
+            Issue("a.md", 1, Severity.ERROR, "F001", "Msg.", "Fix."),
+            Issue("b.md", 1, Severity.ERROR, "F002", "Msg.", "Fix."),
+        ]
+        md = _build_summary_markdown(issues, 2)
+        assert "**2 errors**" in md
+        assert "**2 files**" in md
+
+    def test_issue_table_content(self):
+        issues = [Issue("a.md", 5, Severity.ERROR, "F003", "Bad type.", "Fix it.")]
+        md = _build_summary_markdown(issues, 1)
+        assert "`a.md`" in md
+        assert "F003" in md
+        assert "Fix it." in md
+
+
+class TestSummaryFile:
+    def test_writes_summary_file(self, capsys, monkeypatch, tmp_path):
+        summary_file = tmp_path / "validation-summary.md"
+        monkeypatch.setenv("VALIDATION_SUMMARY_FILE", str(summary_file))
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        report_github([], 3)
+        assert summary_file.exists()
+        content = summary_file.read_text()
+        assert "All **3 notes** passed validation" in content
+
+    def test_no_file_when_env_unset(self, capsys, monkeypatch, tmp_path):
+        monkeypatch.delenv("VALIDATION_SUMMARY_FILE", raising=False)
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        report_github([], 1)  # should not raise
+
+    def test_summary_file_matches_step_summary(self, capsys, monkeypatch, tmp_path):
+        step_summary = tmp_path / "step-summary.md"
+        summary_file = tmp_path / "validation-summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(step_summary))
+        monkeypatch.setenv("VALIDATION_SUMMARY_FILE", str(summary_file))
+        issues = [
+            Issue("a.md", 1, Severity.ERROR, "F003", "Bad type.", "Fix."),
+            Issue("b.md", None, Severity.WARNING, "Q004", "Short.", "Add."),
+        ]
+        report_github(issues, 5)
+        assert step_summary.read_text() == summary_file.read_text()
 
 
 # ---------------------------------------------------------------------------

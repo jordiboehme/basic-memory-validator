@@ -14,6 +14,10 @@ inputs:
     description: 'Path to a JSON config override file for custom validation rules'
     required: false
     default: ''
+  comment:
+    description: 'Post validation results as a PR comment (requires pull-requests: write permission)'
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -28,6 +32,8 @@ runs:
       shell: bash
 
     - name: Validate notes
+      env:
+        VALIDATION_SUMMARY_FILE: ${{ runner.temp }}/validation-summary.md
       run: |
         # Parse paths: strip brackets/quotes, split on commas or newlines
         DIRS=$(echo "${{ inputs.paths }}" | sed "s/^\[//;s/\]$//;s/'//g;s/\"//g" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$' | tr '\n' ' ')
@@ -35,4 +41,35 @@ runs:
           --format github \
           ${{ inputs.config && format('--config {0}', inputs.config) || '' }} \
           $DIRS
+      shell: bash
+
+    - name: Comment on PR
+      if: always() && github.event_name == 'pull_request' && inputs.comment == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SUMMARY_FILE: ${{ runner.temp }}/validation-summary.md
+      run: |
+        if [ ! -f "$SUMMARY_FILE" ]; then
+          exit 0
+        fi
+
+        MARKER="<!-- basic-memory-validator -->"
+        PR_NUMBER="${{ github.event.pull_request.number }}"
+        REPO="${{ github.repository }}"
+
+        # Build comment body with hidden marker
+        BODY="$(printf '%s\n%s' "$MARKER" "$(cat "$SUMMARY_FILE")")"
+
+        # Find existing comment by marker
+        COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+          --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" \
+          2>/dev/null | head -1)
+
+        if [ -n "$COMMENT_ID" ]; then
+          gh api --method PATCH "repos/${REPO}/issues/comments/${COMMENT_ID}" \
+            -f body="$BODY" > /dev/null
+        else
+          gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -f body="$BODY" > /dev/null
+        fi
       shell: bash
