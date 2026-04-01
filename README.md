@@ -87,7 +87,7 @@ Create a JSON file to override default validation settings:
 {
   "valid_types": ["note", "manifest", "registry"],
   "required_fields": ["title", "type", "permalink", "tags"],
-  "permalink_pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9/-]*$",
+  "permalink_pattern": "^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9/.-]*$",
   "tag_pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
   "min_content_lines": 3
 }

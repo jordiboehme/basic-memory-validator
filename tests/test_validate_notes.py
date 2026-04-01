@@ -290,6 +290,8 @@ class TestF005:
         ("test/my-note", False),
         ("deep/nested/path", False),
         ("a1/b2-c3", False),
+        ("templates/kb-claude.md-template", False),
+        ("test/file.v2.draft", False),
         ("UPPER/case", True),
         ("/leading-slash", True),
         ("no-slash", True),
