@@ -35,7 +35,7 @@ import yaml
 class Config:
     valid_types: tuple[str, ...] = ()
     required_fields: tuple[str, ...] = ("title", "type", "permalink", "tags")
-    permalink_pattern: str = r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9/-]*$"
+    permalink_pattern: str = r"^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9/.-]*$"
     tag_pattern: str = r"^[a-z0-9]+(-[a-z0-9]+)*$"
     min_content_lines: int = 3
 
