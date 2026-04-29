@@ -261,12 +261,44 @@ class TestF004:
         note = parse_note("a.md", make_note(tags=["a", "b"]))
         assert "F004" not in issue_ids(validate_format(note, Config()))
 
-    def test_tags_not_a_list(self):
-        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: not-a-list\n---\nA\nB\nC\n"
+    def test_accepts_comma_separated_string(self):
+        """Per spec, `tags` accepts a comma-separated string. Parser normalizes to list."""
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: foo, bar, baz\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        assert note.frontmatter["tags"] == ["foo", "bar", "baz"]
+        assert "F004" not in issue_ids(validate_format(note, Config()))
+
+    def test_single_tag_string_normalized(self):
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: solo\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        assert note.frontmatter["tags"] == ["solo"]
+        assert "F004" not in issue_ids(validate_format(note, Config()))
+
+    def test_string_with_extra_whitespace(self):
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: '  foo  ,  bar  '\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        assert note.frontmatter["tags"] == ["foo", "bar"]
+
+    def test_empty_string_tags_normalizes_to_empty_list(self):
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: ''\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        assert note.frontmatter["tags"] == []
+        issues = [i for i in validate_format(note, Config()) if i.rule_id == "F004"]
+        assert len(issues) == 1
+        assert "empty" in issues[0].message
+
+    def test_tags_int_rejected(self):
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: 42\n---\nA\nB\nC\n"
         note = parse_note("a.md", content)
         issues = [i for i in validate_format(note, Config()) if i.rule_id == "F004"]
         assert len(issues) == 1
-        assert "must be a list" in issues[0].message
+        assert "list or comma-separated string" in issues[0].message
+
+    def test_tags_dict_rejected(self):
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags:\n  a: 1\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        issues = [i for i in validate_format(note, Config()) if i.rule_id == "F004"]
+        assert len(issues) == 1
 
     def test_empty_tags(self):
         content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: []\n---\nA\nB\nC\n"
@@ -346,11 +378,49 @@ class TestQ001:
         assert len(q001s) == 1
         assert "Missing Note" in q001s[0].message
 
-    def test_valid_wikilink(self):
+    def test_valid_wikilink_by_title(self):
         a = parse_note("a.md", make_note(title="Note A", body="See [[Note B]].\n\n\n"))
         b = parse_note("b.md", make_note(title="Note B", permalink="test/note-b"))
         issues = validate_quality([a, b], Config())
         assert "Q001" not in issue_ids(issues)
+
+    def test_valid_wikilink_by_permalink(self):
+        """Per the Basic Memory spec, [[Target]] resolves against title OR permalink."""
+        a = parse_note("a.md", make_note(title="Source", permalink="src/a", body="See [[notes/target-note]].\n\n\n"))
+        b = parse_note("b.md", make_note(title="Target Note", permalink="notes/target-note"))
+        issues = validate_quality([a, b], Config())
+        assert "Q001" not in issue_ids(issues)
+
+    def test_valid_wikilink_by_permalink_when_title_differs(self):
+        """A wikilink whose text matches a permalink (not any title) must resolve."""
+        a = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See [[deep/path/to/note]].\n\n\n"),
+        )
+        b = parse_note(
+            "b.md",
+            make_note(title="Some Display Title", permalink="deep/path/to/note"),
+        )
+        issues = validate_quality([a, b], Config())
+        assert "Q001" not in issue_ids(issues)
+
+    def test_broken_when_neither_title_nor_permalink_match(self):
+        a = parse_note("a.md", make_note(title="A", permalink="src/a", body="See [[ghost]].\n\n\n"))
+        b = parse_note("b.md", make_note(title="B", permalink="src/b"))
+        q001s = [i for i in validate_quality([a, b], Config()) if i.rule_id == "Q001"]
+        assert len(q001s) == 1
+        assert "ghost" in q001s[0].message
+        # Message should reference both resolution paths
+        assert "title or permalink" in q001s[0].message
+
+    def test_inline_prose_wikilink_resolves(self):
+        """Per spec, wikilinks in prose create implicit links_to relations and must still resolve."""
+        a = parse_note(
+            "a.md",
+            make_note(title="A", body="This builds on [[Core Design]] and uses code.\n\n\n"),
+        )
+        b = parse_note("b.md", make_note(title="Core Design", permalink="design/core"))
+        assert "Q001" not in issue_ids(validate_quality([a, b], Config()))
 
     def test_no_frontmatter_contributes_no_title(self):
         a = parse_note("a.md", make_note(body="See [[Orphan]].\n\n\n"))
@@ -413,8 +483,19 @@ class TestQ003:
         has_q003 = "Q003" in issue_ids(issues)
         assert has_q003 == expect
 
-    def test_non_list_tags_skipped(self):
-        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: bad\n---\nA\nB\nC\n"
+    def test_string_tags_validated_per_tag(self):
+        """Comma-separated string tags are normalized then validated against the tag pattern."""
+        # 'BadTag' is uppercase → fires Q003 after normalization
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: BadTag, ok-tag\n---\nA\nB\nC\n"
+        note = parse_note("a.md", content)
+        issues = validate_quality([note], Config())
+        q003s = [i for i in issues if i.rule_id == "Q003"]
+        assert len(q003s) == 1
+        assert "BadTag" in q003s[0].message
+
+    def test_non_list_non_string_tags_skipped(self):
+        """tags as int/dict (caught by F004) is skipped here, not crashed on."""
+        content = "---\ntitle: X\ntype: note\npermalink: test/x\ntags: 42\n---\nA\nB\nC\n"
         note = parse_note("a.md", content)
         issues = validate_quality([note], Config())
         assert "Q003" not in issue_ids(issues)
@@ -445,6 +526,168 @@ class TestQ004:
         note = parse_note("a.md", make_note(body="Just one.\n"))
         issues = validate_quality([note], cfg)
         assert "Q004" not in issue_ids(issues)
+
+
+# ---------------------------------------------------------------------------
+# validate_quality: Q005 (duplicate titles)
+# ---------------------------------------------------------------------------
+
+class TestQ005:
+    def test_duplicate_titles(self):
+        a = parse_note("a.md", make_note(title="Same Title", permalink="src/a"))
+        b = parse_note("b.md", make_note(title="Same Title", permalink="src/b"))
+        issues = validate_quality([a, b], Config())
+        q005s = [i for i in issues if i.rule_id == "Q005"]
+        assert len(q005s) == 2
+        assert any("a.md" in i.message for i in q005s)
+        assert any("b.md" in i.message for i in q005s)
+        # Message should explain the link-ambiguity consequence
+        assert all("ambiguous" in i.message for i in q005s)
+
+    def test_unique_titles(self):
+        a = parse_note("a.md", make_note(title="One", permalink="src/a"))
+        b = parse_note("b.md", make_note(title="Two", permalink="src/b"))
+        assert "Q005" not in issue_ids(validate_quality([a, b], Config()))
+
+    def test_three_way_duplicate(self):
+        notes = [
+            parse_note("a.md", make_note(title="Same", permalink="src/a")),
+            parse_note("b.md", make_note(title="Same", permalink="src/b")),
+            parse_note("c.md", make_note(title="Same", permalink="src/c")),
+        ]
+        q005s = [i for i in validate_quality(notes, Config()) if i.rule_id == "Q005"]
+        assert len(q005s) == 3
+
+    def test_duplicate_title_independent_of_duplicate_permalink(self):
+        """Q005 fires on title collision even when permalinks are unique."""
+        a = parse_note("a.md", make_note(title="Same", permalink="src/a"))
+        b = parse_note("b.md", make_note(title="Same", permalink="src/b"))
+        ids = issue_ids(validate_quality([a, b], Config()))
+        assert "Q005" in ids
+        assert "Q002" not in ids
+
+
+# ---------------------------------------------------------------------------
+# validate_quality: Q006 (self-link detection)
+# ---------------------------------------------------------------------------
+
+class TestQ006:
+    def test_self_link_by_title(self):
+        note = parse_note(
+            "a.md",
+            make_note(title="My Note", permalink="src/my-note", body="See [[My Note]] above.\n\n\n"),
+        )
+        issues = validate_quality([note], Config())
+        q006s = [i for i in issues if i.rule_id == "Q006"]
+        assert len(q006s) == 1
+        assert "My Note" in q006s[0].message
+        # Q001 must NOT also fire — self-link short-circuits
+        assert "Q001" not in issue_ids(issues)
+
+    def test_self_link_by_permalink(self):
+        note = parse_note(
+            "a.md",
+            make_note(title="My Note", permalink="src/my-note", body="See [[src/my-note]].\n\n\n"),
+        )
+        q006s = [i for i in validate_quality([note], Config()) if i.rule_id == "Q006"]
+        assert len(q006s) == 1
+        assert "src/my-note" in q006s[0].message
+
+    def test_link_to_other_note_not_self_link(self):
+        a = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See [[B]] for context.\n\n\n"),
+        )
+        b = parse_note("b.md", make_note(title="B", permalink="src/b"))
+        assert "Q006" not in issue_ids(validate_quality([a, b], Config()))
+
+    def test_no_frontmatter_no_self_link(self):
+        """A note without frontmatter has no self-targets, so Q006 cannot fire."""
+        note = parse_note("a.md", "Body with [[Anything]].\n")
+        assert "Q006" not in issue_ids(validate_quality([note], Config()))
+
+    def test_self_link_only_for_own_targets(self):
+        """[[A]] in note B is not a self-link, even though A is another note's title."""
+        a = parse_note("a.md", make_note(title="A", permalink="src/a"))
+        b = parse_note(
+            "b.md",
+            make_note(title="B", permalink="src/b", body="See [[A]] for details.\n\n\n"),
+        )
+        q006s = [i for i in validate_quality([a, b], Config()) if i.rule_id == "Q006"]
+        assert q006s == []
+
+
+# ---------------------------------------------------------------------------
+# validate_quality: Q007 (broken memory:// URLs)
+# ---------------------------------------------------------------------------
+
+class TestQ007:
+    def test_broken_memory_url(self):
+        note = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See memory://nope-not-here\n\n\n"),
+        )
+        q007s = [i for i in validate_quality([note], Config()) if i.rule_id == "Q007"]
+        assert len(q007s) == 1
+        assert "memory://nope-not-here" in q007s[0].message
+        # Cross-project caveat must be present so users know it might be a false positive
+        assert "different project" in q007s[0].message
+
+    def test_resolves_by_permalink(self):
+        a = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See memory://notes/target-note for details.\n\n\n"),
+        )
+        b = parse_note("b.md", make_note(title="Target", permalink="notes/target-note"))
+        assert "Q007" not in issue_ids(validate_quality([a, b], Config()))
+
+    def test_resolves_by_title(self):
+        a = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See memory://OtherNote.\n\n\n"),
+        )
+        b = parse_note("b.md", make_note(title="OtherNote", permalink="src/other"))
+        assert "Q007" not in issue_ids(validate_quality([a, b], Config()))
+
+    def test_wildcard_skipped(self):
+        """Wildcard URLs cannot be verified against the scanned set — skip them."""
+        note = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See memory://notes/*\n\n\n"),
+        )
+        assert "Q007" not in issue_ids(validate_quality([note], Config()))
+
+    def test_multiple_urls_per_note(self):
+        a = parse_note(
+            "a.md",
+            make_note(
+                title="A",
+                permalink="src/a",
+                body="memory://known and memory://ghost are different.\n\n\n",
+            ),
+        )
+        b = parse_note("b.md", make_note(title="known", permalink="src/known"))
+        q007s = [i for i in validate_quality([a, b], Config()) if i.rule_id == "Q007"]
+        assert len(q007s) == 1
+        assert "memory://ghost" in q007s[0].message
+
+    def test_url_inside_code_fence_ignored(self):
+        body = "```\nmemory://example\n```\nSome real content.\nMore.\nMore.\n"
+        note = parse_note("a.md", make_note(body=body))
+        assert note.memory_urls == []
+
+    def test_url_inside_inline_code_ignored(self):
+        body = "Use `memory://example` syntax. Other stuff.\nMore.\nMore.\n"
+        note = parse_note("a.md", make_note(body=body))
+        assert note.memory_urls == []
+
+    def test_trailing_punctuation_stripped(self):
+        """A URL ending a sentence should not include the period."""
+        note = parse_note(
+            "a.md",
+            make_note(title="A", permalink="src/a", body="See memory://target.\n\n\n"),
+        )
+        assert note.memory_urls[0][1] == "target"
 
 
 # ---------------------------------------------------------------------------

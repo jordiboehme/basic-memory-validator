@@ -67,17 +67,20 @@ jobs:
 | F001 | YAML frontmatter is parseable (delimited by `---`) |
 | F002 | Required fields present: `title`, `type`, `permalink`, `tags` |
 | F003 | `type` is a non-empty string (or one of `valid_types` if configured) |
-| F004 | `tags` is a non-empty list |
+| F004 | `tags` is a non-empty list (or comma-separated string) |
 | F005 | `permalink` is lowercase slash-separated path |
 
 ### Warnings (informational)
 
 | Rule | Check |
 |------|-------|
-| Q001 | Broken wikilinks — `[[Title]]` doesn't match any note's `title` |
+| Q001 | Broken wikilinks — `[[Target]]` doesn't match any note's `title` or `permalink` |
 | Q002 | Duplicate permalinks across files |
 | Q003 | Tags not following `lowercase-with-hyphens` format |
 | Q004 | File has no meaningful content beyond frontmatter |
+| Q005 | Duplicate titles across files (makes `[[Title]]` ambiguous) |
+| Q006 | Self-link — note links to itself by title or permalink |
+| Q007 | Broken `memory://` URL — no match in scanned dirs (may live in another project) |
 
 ## Config Override
 

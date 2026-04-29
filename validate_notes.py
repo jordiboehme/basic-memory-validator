@@ -78,6 +78,7 @@ class NoteFile:
     frontmatter: dict | None
     frontmatter_end_line: int
     wikilinks: list[tuple[int, str]]
+    memory_urls: list[tuple[int, str]]
     content_line_count: int
     lines: list[str]
 
@@ -88,8 +89,10 @@ class NoteFile:
 
 FRONTMATTER_DELIM = "---"
 WIKILINK_RE = re.compile(r"\[\[(.+?)\]\]")
+MEMORY_URL_RE = re.compile(r"memory://([A-Za-z0-9._/*-]+)")
 FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 INLINE_CODE_RE = re.compile(r"`[^`]+`")
+URL_TRAILING_PUNCT = ".,;:!?"
 
 
 def parse_note(path: str, content: str) -> NoteFile:
@@ -114,8 +117,16 @@ def parse_note(path: str, content: str) -> NoteFile:
             except yaml.YAMLError:
                 frontmatter = None
 
-    # --- Collect wikilinks (outside code fences) ---
+    # Per spec, `tags` accepts a comma-separated string. Normalize once so all
+    # downstream rules see a single shape.
+    if frontmatter is not None and isinstance(frontmatter.get("tags"), str):
+        frontmatter["tags"] = [
+            t.strip() for t in frontmatter["tags"].split(",") if t.strip()
+        ]
+
+    # --- Collect wikilinks and memory:// URLs (outside code fences) ---
     wikilinks: list[tuple[int, str]] = []
+    memory_urls: list[tuple[int, str]] = []
     in_fence = False
     content_line_count = 0
 
@@ -137,10 +148,16 @@ def parse_note(path: str, content: str) -> NoteFile:
         if line.strip():
             content_line_count += 1
 
-        # Collect wikilinks (strip inline code first to avoid false positives)
+        # Strip inline code so backtick-quoted examples don't produce matches
         line_without_code = INLINE_CODE_RE.sub("", line)
+
         for m in WIKILINK_RE.finditer(line_without_code):
             wikilinks.append((i + 1, m.group(1)))  # 1-based line
+
+        for m in MEMORY_URL_RE.finditer(line_without_code):
+            url = m.group(1).rstrip(URL_TRAILING_PUNCT)
+            if url:
+                memory_urls.append((i + 1, url))
 
     return NoteFile(
         path=path,
@@ -148,6 +165,7 @@ def parse_note(path: str, content: str) -> NoteFile:
         frontmatter=frontmatter,
         frontmatter_end_line=frontmatter_end_line,
         wikilinks=wikilinks,
+        memory_urls=memory_urls,
         content_line_count=content_line_count,
         lines=lines,
     )
@@ -208,7 +226,7 @@ def validate_format(note: NoteFile, config: Config) -> list[Issue]:
                 fix="Use edit_note() to set the correct type.",
             ))
 
-    # F004: Tags is a non-empty list
+    # F004: Tags is a non-empty list (or comma-separated string, normalized in parse_note)
     tags = fm.get("tags")
     if tags is not None:
         if not isinstance(tags, list):
@@ -217,7 +235,7 @@ def validate_format(note: NoteFile, config: Config) -> list[Issue]:
                 line=1,
                 severity=Severity.ERROR,
                 rule_id="F004",
-                message=f"'tags' must be a list, got {type(tags).__name__}.",
+                message=f"'tags' must be a list or comma-separated string, got {type(tags).__name__}.",
                 fix="Use edit_note() to fix the tags — Basic Memory formats them as a YAML list.",
             ))
         elif len(tags) == 0:
@@ -253,31 +271,69 @@ def validate_format(note: NoteFile, config: Config) -> list[Issue]:
 def validate_quality(notes: list[NoteFile], config: Config) -> list[Issue]:
     issues: list[Issue] = []
 
-    # Build lookup sets
-    all_titles: set[str] = set()
+    # Build lookup sets. Per the Basic Memory spec, a wikilink target resolves
+    # against either the entity's title or its permalink.
+    link_targets: set[str] = set()
     permalink_to_files: dict[str, list[str]] = {}
+    title_to_files: dict[str, list[str]] = {}
 
     for note in notes:
         if note.frontmatter:
             title = note.frontmatter.get("title")
             if title:
-                all_titles.add(title)
+                link_targets.add(title)
+                title_to_files.setdefault(title, []).append(note.path)
 
             permalink = note.frontmatter.get("permalink")
             if permalink:
+                link_targets.add(permalink)
                 permalink_to_files.setdefault(permalink, []).append(note.path)
 
     for note in notes:
-        # Q001: Broken wikilinks
+        self_targets: set[str] = set()
+        if note.frontmatter:
+            for key in ("title", "permalink"):
+                value = note.frontmatter.get(key)
+                if value:
+                    self_targets.add(value)
+
+        # Q001: Broken wikilinks / Q006: Self-link detection
         for line_num, target in note.wikilinks:
-            if target not in all_titles:
+            if target in self_targets:
+                issues.append(Issue(
+                    file_path=note.path,
+                    line=line_num,
+                    severity=Severity.WARNING,
+                    rule_id="Q006",
+                    message=f"Self-link [[{target}]] — note links to itself.",
+                    fix="Remove the self-reference, or link to a different note.",
+                ))
+            elif target not in link_targets:
                 issues.append(Issue(
                     file_path=note.path,
                     line=line_num,
                     severity=Severity.WARNING,
                     rule_id="Q001",
-                    message=f"Broken wikilink [[{target}]] — no note with this title exists.",
-                    fix="Check the title spelling, or create the missing note with write_note().",
+                    message=f"Broken wikilink [[{target}]] — no note with this title or permalink exists.",
+                    fix="Check the spelling, or create the missing note with write_note().",
+                ))
+
+        # Q007: Broken memory:// URLs
+        for line_num, url in note.memory_urls:
+            if "*" in url:
+                continue  # wildcard pattern — not verifiable against scanned set
+            if url not in link_targets:
+                issues.append(Issue(
+                    file_path=note.path,
+                    line=line_num,
+                    severity=Severity.WARNING,
+                    rule_id="Q007",
+                    message=(
+                        f"Broken memory:// URL 'memory://{url}' — no note with this "
+                        f"title or permalink in the scanned directories. "
+                        f"(May be a reference to a different project.)"
+                    ),
+                    fix="Check the spelling, or create the missing note with write_note().",
                 ))
 
         if note.frontmatter:
@@ -318,6 +374,20 @@ def validate_quality(notes: list[NoteFile], config: Config) -> list[Issue]:
                     rule_id="Q002",
                     message=f"Duplicate permalink '{permalink}' — also used by {', '.join(others)}.",
                     fix="Use edit_note() on one of the files to assign a unique permalink.",
+                ))
+
+    # Q005: Duplicate titles
+    for title, files in title_to_files.items():
+        if len(files) > 1:
+            for file_path in files:
+                others = [f for f in files if f != file_path]
+                issues.append(Issue(
+                    file_path=file_path,
+                    line=1,
+                    severity=Severity.WARNING,
+                    rule_id="Q005",
+                    message=f"Duplicate title '{title}' — also used by {', '.join(others)}. Wikilinks [[{title}]] become ambiguous.",
+                    fix="Use edit_note() on one of the files to give it a unique title.",
                 ))
 
     return issues
